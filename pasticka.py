@@ -1,7 +1,9 @@
 #!/usr/bin/python
+# coding=utf-8
 import RPi.GPIO as GPIO
 from pb.pushbullet_client import PushbulletClient
 from gmail.gmail_client import GmailClient
+from blink.blinker import Blinker
 import logging
 import sys, getopt
 import json
@@ -22,6 +24,7 @@ CHECK_DELAY_SECS = 0.5  # delay in secs
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+blink = Blinker(LED_PIN)
 
 def load_config():
 	config_file_path = "/home/pi/projects/pasticka/config.json"
@@ -54,16 +57,27 @@ def check_switch(pin):
 	if stav == lastState:
 		return
 
+	refreshSignalization(stav)
+
 	logger.debug('PIN: {} state: {}'.format(pin, stav))
-	GPIO.output(LED_PIN, stav)
 
 	if (config["pushbullet"]["active"] == 1):
-		pb.send("Pasticka", 'Stav: {}'.format(stav))
+		pb.send("Pasticka", 'Stav: {}'.format(translateStav(stav)))
 
 	if (config["gmail"]["active"] == 1):
 		gm = GmailClient(config["gmail"]["sender"], config["gmail"]["username"], config["gmail"]["password"])
-		gm.send([config["gmail"]["to"]], "Pasticka", "Stav: {}".format(stav))
+		gm.send([config["gmail"]["to"]], "Pasticka", "Stav: {}".format(translateStav(stav)))
 	lastState = stav
+
+def translateStav(stav):
+	return "Nastrazena" if stav==1 else "Zaklapnuta"
+
+def refreshSignalization(stav):
+	# GPIO.output(LED_PIN, 1 if stav == 0 else 0)
+	if stav == 0:
+		blink.start(Blinker.QUICK)
+	else:
+		blink.start(Blinker.HEARTBEAT)
 
 
 pb = PushbulletClient(config["pushbullet"]["apiKey"])
@@ -72,6 +86,8 @@ pb = PushbulletClient(config["pushbullet"]["apiKey"])
 
 if __name__ == "__main__":
 	logger.debug('Started')
+
+	refreshSignalization(GPIO.input(SWITCH_PIN))
 
 	try:
 		while True:
@@ -84,7 +100,11 @@ if __name__ == "__main__":
 				# logger.debug('checking now: {} last: {}'.format(now, last_check))
 				last_check = now
 				check_switch(SWITCH_PIN)
-	except KeyboardInterrupt:
+	except (KeyboardInterrupt, SystemExit):
+		logger.debug('Finished')
+		raise
+	finally:
+		blink.stop()
 		GPIO.cleanup()
 
 	logger.debug('Finished')
